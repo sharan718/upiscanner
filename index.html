@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UPI QR Code Scanner</title>
+  
+  <!-- Google AdSense -->
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-XXXXXXXXXXXX"
+    crossorigin="anonymous"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: linear-gradient(to bottom right, #ff7f50, #f39c12, #3498db);
+      color: white;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: start;
+      min-height: 100vh;
+      text-align: center;
+    }
+    h1 {
+      color: white;
+      margin-top: 20px;
+    }
+    #scanner-container, #resultScreen, #history {
+      width: 90%;
+      max-width: 500px;
+      margin-top: 20px;
+      background-color: rgba(0, 0, 0, 0.6);
+      padding: 15px;
+      border-radius: 10px;
+    }
+    video {
+      width: 100%;
+      border-radius: 10px;
+    }
+    input, button {
+      padding: 10px;
+      margin: 10px 5px;
+      border-radius: 5px;
+      border: none;
+      font-size: 16px;
+    }
+    button {
+      background-color: #e74c3c;
+      color: white;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #c0392b;
+    }
+    .theme-toggle {
+      background-color: #2ecc71;
+    }
+    .theme-toggle:hover {
+      background-color: #27ae60;
+    }
+    .history-item {
+      background: #e67e22;
+      padding: 10px;
+      margin-top: 10px;
+      border-radius: 5px;
+    }
+  </style>
+</head>
+<body>
+  <h1>UPI QR Code Scanner</h1>
+
+  <div id="scanner-container">
+    <video id="cameraView" autoplay playsinline></video>
+    <input type="file" id="imageInput" accept="image/*">
+  </div>
+
+  <input type="text" id="manualUpiId" placeholder="Enter UPI ID manually" />
+  <input type="number" id="manualAmount" placeholder="Enter amount" />
+  <button onclick="processManualInput()">Submit</button>
+
+  <button id="startBtn" onclick="startScanner()">Start Scanner</button>
+  <button id="stopBtn" style="display:none" onclick="stopScanner()">Stop Scanner</button>
+  <button id="payNowBtn" style="display:none" onclick="payNow()">Pay Now</button>
+  <button id="shareBtn" style="display:none" onclick="shareUPI()">Share UPI Info</button>
+  <button class="theme-toggle" onclick="toggleTheme()">Toggle Theme</button>
+
+  <div id="resultScreen" style="display:none">
+    <h2>Scanned/Entered UPI Info</h2>
+    <p><strong>Recipient Name:</strong> <span id="recipientName">N/A</span></p>
+    <p><strong>UPI ID:</strong> <span id="upiId">N/A</span></p>
+    <p><strong>Amount:</strong> ₹<span id="amount">N/A</span></p>
+  </div>
+
+  <div id="history">
+    <h2>Scan History</h2>
+    <div id="scanHistory"></div>
+    <button onclick="exportHistory()">Export History</button>
+  </div>
+
+  <!-- Google AdSense Ad -->
+  <div style="margin-top: 30px;">
+    <ins class="adsbygoogle"
+         style="display:block"
+         data-ad-client="ca-pub-XXXXXXXXXXXX"
+         data-ad-slot="1234567890"
+         data-ad-format="auto"
+         data-full-width-responsive="true"></ins>
+    <script>
+      (adsbygoogle = window.adsbygoogle || []).push({});
+    </script>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <script>
+    let scanning = false;
+    let stream = null;
+    let scanHistory = [];
+    const video = document.getElementById('cameraView');
+    const cameraPermissionKey = 'cameraPermissionRequested';
+
+    function startScanner() {
+      const permissionGiven = localStorage.getItem(cameraPermissionKey);
+      if (permissionGiven === 'true') {
+        beginStreaming();
+      } else {
+        navigator.mediaDevices.getUserMedia({ video: true })
+          .then(s => {
+            s.getTracks().forEach(t => t.stop());
+            localStorage.setItem(cameraPermissionKey, 'true');
+            beginStreaming();
+          }).catch(err => {
+            alert("Camera permission denied or error: " + err);
+          });
+      }
+    }
+
+    function beginStreaming() {
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+        .then(s => {
+          stream = s;
+          video.srcObject = stream;
+          video.onloadedmetadata = () => {
+            video.play();
+            scanning = true;
+            scanLoop();
+          };
+          document.getElementById('startBtn').style.display = 'none';
+          document.getElementById('stopBtn').style.display = 'inline-block';
+        }).catch(err => alert("Camera error: " + err));
+    }
+
+    function stopScanner() {
+      scanning = false;
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        video.srcObject = null;
+      }
+      document.getElementById('startBtn').style.display = 'inline-block';
+      document.getElementById('stopBtn').style.display = 'none';
+    }
+
+    function scanLoop() {
+      if (!scanning) return;
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0);
+      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imgData.data, canvas.width, canvas.height);
+      if (code) {
+        stopScanner();
+        processQRCode(code.data);
+      } else {
+        requestAnimationFrame(scanLoop);
+      }
+    }
+
+    function processQRCode(data) {
+      const params = new URLSearchParams(data.split('?')[1]);
+      const name = params.get('pn') || 'N/A';
+      const id = params.get('pa');
+      const amt = params.get('am') || document.getElementById('manualAmount').value;
+      if (!id) return alert("Invalid QR");
+      showResult(name, id, amt);
+    }
+
+    function processManualInput() {
+      const id = document.getElementById('manualUpiId').value.trim();
+      const amt = document.getElementById('manualAmount').value.trim();
+      if (!id || !amt) return alert("Fill both UPI ID and amount.");
+      showResult('Manual Entry', id, amt);
+    }
+
+    function showResult(name, id, amt) {
+      document.getElementById('recipientName').textContent = name;
+      document.getElementById('upiId').textContent = id;
+      document.getElementById('amount').textContent = amt;
+      document.getElementById('resultScreen').style.display = 'block';
+      document.getElementById('payNowBtn').style.display = 'inline-block';
+      document.getElementById('shareBtn').style.display = 'inline-block';
+      saveHistory(name, id, amt);
+    }
+
+    function payNow() {
+      const id = document.getElementById('upiId').textContent;
+      const name = document.getElementById('recipientName').textContent;
+      const amt = document.getElementById('amount').textContent;
+      window.location.href = `upi://pay?pa=${id}&pn=${name}&am=${amt}`;
+    }
+
+    function shareUPI() {
+      const id = document.getElementById('upiId').textContent;
+      const amt = document.getElementById('amount').textContent;
+      const shareText = `Send ₹${amt} to UPI ID: ${id}`;
+      const shareUrl = `https://wa.me/?text=${encodeURIComponent(shareText)}`;
+      window.open(shareUrl, '_blank');
+    }
+
+    function saveHistory(name, id, amt) {
+      const time = new Date().toLocaleString();
+      scanHistory.push({ name, id, amt, time });
+      updateHistory();
+    }
+
+    function updateHistory() {
+      const container = document.getElementById('scanHistory');
+      container.innerHTML = '';
+      scanHistory.forEach(item => {
+        container.innerHTML += `<div class='history-item'><p>${item.name} - ${item.id} - ₹${item.amt} <br><small>${item.time}</small></p></div>`;
+      });
+    }
+
+    function exportHistory() {
+      const csv = 'Name,UPI ID,Amount,Time\n' + scanHistory.map(i => `${i.name},${i.id},${i.amt},${i.time}`).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'upi_history.csv';
+      link.click();
+    }
+
+    function toggleTheme() {
+      const body = document.body;
+      if (body.style.background.includes('2c3e50')) {
+        body.style.background = 'linear-gradient(to bottom right, #ff7f50, #f39c12, #3498db)';
+      } else {
+        body.style.background = 'linear-gradient(to bottom right, #2c3e50, #34495e, #16a085)';
+      }
+    }
+
+    document.getElementById('imageInput').addEventListener('change', function () {
+      const file = this.files[0];
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.drawImage(img, 0, 0);
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imgData.data, canvas.width, canvas.height);
+          if (code) {
+            processQRCode(code.data);
+          } else {
+            alert("No QR found in image");
+          }
+        }
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  </script>
+</body>
+</html>
